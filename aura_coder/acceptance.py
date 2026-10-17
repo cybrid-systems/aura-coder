@@ -1,7 +1,7 @@
 """Rebind-correctness acceptance checks for the Aura build in AURA_BIN.
 
 Each acceptance/<name>/repro.aura is run from its own directory (lib/ on AURA_PATH); the last non-empty stdout
-line must equal expect.txt. Issue repros are copied from cybrid-systems/aura (#4546 #4547 #4550 #4552);
+line must equal expect.txt. Issue repros are copied from cybrid-systems/aura (#4546 #4547 #4550 #4552 #4583 #4584);
 coder-cycle is aura-coder's own rebind/rollback shape.
 """
 from __future__ import annotations
@@ -16,6 +16,8 @@ CHECKS = {
     "4547": "module caller runs a different workspace define after mutate:rebind",
     "4550": "third rebind leaves a caller as 'invalid closure'",
     "4552": "non-tail (error ...) in a workspace define is dropped",
+    "4583": "10 rebinds next to a self-recursive define stay flat (no 4x-per-rebind blow-up)",
+    "4584": "2nd call of a workspace define whose sibling uses filter runs the right define",
     "coder-cycle": "aura-coder: 3 rebinds + snapshot/rebind/restore round trip",
 }
 

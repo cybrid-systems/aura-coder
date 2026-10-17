@@ -1,0 +1,5 @@
+;; cybrid-systems/aura#4584: from the 2nd call, (order x) inside decide runs budget instead.
+(set-code "(define budget (lambda (c) 8))\n(define order (lambda (c) (filter (lambda (o) (equal? o \"a\")) (list \"a\" \"b\"))))\n(define decide (lambda (x) (list (budget x) (order x))))")
+(eval-current)
+(display (list "call1" (decide "a"))) (newline)
+(display (list "call2" (decide "a"))) (newline)

@@ -1,0 +1,9 @@
+;; cybrid-systems/aura#4583: 10 rebinds of the same 8-clause body next to a self-recursive define.
+;; Healthy: flat ~5 ms each. Broken: ~4x per rebind from the 7th on (10 rebinds ~1.5 s; 12 -> bad_alloc).
+(set-code "(define f (lambda (x) 0))\n(define g (lambda (xs ys) (if (null? ys) (list) (if (member (car ys) xs) (g xs (cdr ys)) (cons (car ys) (g xs (cdr ys)))))))")
+(eval-current)
+(define body "(lambda (x) (cond ((equal? x \"k0\") 0) ((equal? x \"k1\") 1) ((equal? x \"k2\") 2) ((equal? x \"k3\") 3) ((equal? x \"k4\") 4) ((equal? x \"k5\") 5) ((equal? x \"k6\") 6) ((equal? x \"k7\") 7) (else 0)))")
+(define t0 (current-time-ms))
+(define (go k) (if (<= k 10) (begin (mutate:rebind "f" body "repro") (go (+ k 1))) #t))
+(go 1)
+(display (list "bounded" (< (- (current-time-ms) t0) 500))) (newline)

@@ -106,6 +106,8 @@
 (define *key-total* (hash))
 (define *class-ev* (hash))
 
+(define (order-of pref dflt) (append pref (filter (lambda (o) (not (member o pref))) dflt)))
+(define (order cls) (order-of (rank cls) default-order))   ;; host-side: see policy_seed.aura (aura#4584)
 (define (top-op fs)
   (car (order (classify (field fs 1) (field fs 2) (field fs 3) (field fs 4)))))
 
@@ -149,7 +151,8 @@
     (cond
       ((equal? cmd "DECIDE")
        (let ((d (decide (field fs 1) (field fs 2) (field fs 3) (field fs 4))))
-         (reply (hash "cls" (list-ref d 0) "budget" (list-ref d 1) "order" (list-ref d 2) "version" *version*))))
+         (reply (hash "cls" (list-ref d 0) "budget" (list-ref d 1) "order" (order-of (list-ref d 2) (list-ref d 3))
+                      "version" *version*))))
       ((equal? cmd "REPORT")
        (let ((op (field fs 6)))
          (if (and *learn* (not (equal? op "")))

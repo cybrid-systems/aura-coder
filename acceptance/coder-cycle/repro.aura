@@ -17,4 +17,4 @@
 (ast:restore s1)
 (eval-current)
 (define d3 (decide "AssertionError" "-" "off-by-one" "-"))
-(display (list (car d1) (cadr d1) (car (caddr d1)) (car d2) (car (caddr d2)) (equal? d2 d3))) (newline)
+(display (list (car d1) (cadr d1) (car (caddr d1)) (car d2) (car (caddr d2)) (equal? d2 d3) (equal? d1 (decide "TypeError" "can only concatenate str (not \"int\") to str" "-" "Return")))) (newline)

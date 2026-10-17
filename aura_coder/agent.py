@@ -123,7 +123,7 @@ class Agent:
             if not solved:
                 winop, ep.pm_attempts = post_mortem(task, feats, n)
             self.history.append((task, feats))
-            window = self.history[-GATE_WINDOW:]
+            window = self.gate_window(feats)
             old = [ctl.decide(f, tag="GATE_DECIDE") for _, f in window]
             rep = ctl.report(feats, solved, winop)
             prop = rep.get("propose")
@@ -150,6 +150,13 @@ class Agent:
             ctl.close()
         self.episodes.append(ep)
         return ep
+
+    def gate_window(self, feats):
+        """Replay set: the last GATE_WINDOW tasks plus earlier tasks with the same failure signature (cap 2x)."""
+        key = lambda f: (f["etype"], f["msgpat"], f["delta"], f["node"])
+        recent = self.history[-GATE_WINDOW:]
+        same = [h for h in self.history[:-GATE_WINDOW] if key(h[1]) == key(feats)][-GATE_WINDOW:]
+        return same + recent
 
     def gate(self, window, old, new):
         """Replay the recent window: KEEP iff no fewer solves and (more solves or fewer attempts)."""

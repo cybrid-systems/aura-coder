@@ -83,8 +83,9 @@
                (let ((nc (string-append "L" (number->string *next-class*))))
                  (set! *next-class* (+ *next-class* 1))
                  (set! *spec-rules* (cons (list (field fs 1) (field fs 2) (field fs 3) (field fs 4) nc) *spec-rules*))
-                 (set! *rank-table* (assoc-set *rank-table* nc (list op)))
-                 (set! *budget-table* (assoc-set *budget-table* nc 6))
+                 ;; the new class keeps the old class's preferences (op first) and its budget
+                 (set! *rank-table* (assoc-set *rank-table* nc (cons op (without op (rank cls)))))
+                 (set! *budget-table* (assoc-set *budget-table* nc (budget cls)))
                  (set! cls nc)
                  (and (rebind! "rank" (compile-rank) (string-append "specialize rank " nc " -> " op))
                       (rebind! "budget" (compile-budget) (string-append "specialize budget " nc))
@@ -138,7 +139,8 @@
              (etop (if (null? er) "" (car er)))
              (en (if (null? er) 0 (hash-ref *class-ev* (string-append cls "\t" etop) 0)))
              (pbk (string-append "promote\t" cls "\t" etop))
-             (can-promote (and (not (equal? etop "")) (>= en *min-evidence*)
+             ;; never re-rank the fallback class: "unknown" is the exploration order for failures not seen yet
+             (can-promote (and (not (equal? cls "unknown")) (not (equal? etop "")) (>= en *min-evidence*)
                                (not (equal? etop (car (order cls)))) (allowed? pbk en)))
              (can-spec (and pure (allowed? sbk n))))
         (cond ((and (equal? cls "unknown") can-spec) (propose! "specialize" fs op sbk n))

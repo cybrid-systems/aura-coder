@@ -1,0 +1,14 @@
+FAIL  4546         top-level define dropped when its initializer runs set-code + eval-current (letrec)
+      got: (a unbound)
+PASS  4547         module caller runs a different workspace define after mutate:rebind
+      got: (caller6:b 3001 caller6:a 1001)
+PASS  4550         third rebind leaves a caller as 'invalid closure'
+      got: (build 000000)
+FAIL  4552         non-tail (error ...) in a workspace define is dropped
+      got: (seq 5 arg type mismatch — expected Int, got Error)
+FAIL  4583         10 rebinds next to a self-recursive define stay flat (no 4x-per-rebind blow-up)
+      got: (bounded #f)
+FAIL  4584         2nd call of a workspace define whose sibling uses filter runs the right define
+      got: (call2 (8 8))
+PASS  coder-cycle  aura-coder: 3 rebinds + snapshot/rebind/restore round trip
+      got: (L0 6 add_import off-by-one index_shift #t #t)

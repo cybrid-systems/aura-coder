@@ -45,3 +45,14 @@ class Features(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Proposer(unittest.TestCase):
+    def test_offline_proposer_is_inert(self):
+        import os
+        from aura_coder import proposer
+        from aura_coder.operators import OPERATORS
+        os.environ.pop("AURA_CODER_LLM_URL", None)
+        self.assertFalse(proposer.register())
+        self.assertNotIn("llm_patch", OPERATORS)
+        self.assertEqual(list(proposer.llm_patch("def fn(): pass\n", {})), [])

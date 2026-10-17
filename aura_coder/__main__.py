@@ -45,6 +45,8 @@ def main(argv=None) -> int:
     b.add_argument("--n", type=int, default=60)
     b.add_argument("--jobs", type=int, default=1)
     b.add_argument("--out", default="runs")
+    b.add_argument("--noise", type=float, default=0.0,
+                   help="probability that a reported winning operator is replaced by a wrong one")
     lt = sub.add_parser("latency", help="closed-loop set-code -> query -> mutate -> eval-current inside Aura")
     lt.add_argument("--n", type=int, default=200)
     sub.add_parser("acceptance", help="rebind-correctness checks (aura #4546 #4547 #4550 #4552) on AURA_BIN")
@@ -55,7 +57,7 @@ def main(argv=None) -> int:
 
     if a.cmd == "bench":
         from .bench import bench, table
-        res = bench(a.modes, a.seeds, a.n, a.out, a.jobs)
+        res = bench(a.modes, a.seeds, a.n, a.out, a.jobs, a.noise)
         print(table(res))
         return 0
     if a.cmd == "latency":

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import sys
 import time
 from dataclasses import dataclass, field, asdict
@@ -77,8 +78,10 @@ def _sha(s: str) -> str:
 class Agent:
     """mode: static | restart | adaptive | adaptive-nogate"""
 
-    def __init__(self, mode: str, outdir: Path | None = None):
+    def __init__(self, mode: str, outdir: Path | None = None, noise: float = 0.0, seed: int = 0):
         self.mode = mode
+        self.noise = noise                      # P(reported winning operator is wrong): mis-attributed fixes
+        self.rng = random.Random(1000 + seed)
         self.ctl = None if mode == "restart" else AuraControl(learn=mode.startswith("adaptive"))
         self.history: list[tuple[Task, dict]] = []
         self.episodes: list[Episode] = []
@@ -125,6 +128,8 @@ class Agent:
             self.history.append((task, feats))
             window = self.gate_window(feats)
             old = [ctl.decide(f, tag="GATE_DECIDE") for _, f in window]
+            if winop and self.noise and self.rng.random() < self.noise:
+                winop = self.rng.choice([o for o in OPERATORS if o != winop])
             rep = ctl.report(feats, solved, winop)
             prop = rep.get("propose")
             if prop:

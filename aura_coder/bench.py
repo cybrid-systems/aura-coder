@@ -21,11 +21,11 @@ def _pct(xs, q):
     return xs[min(len(xs) - 1, int(q * len(xs)))]
 
 
-def run_one(mode: str, seed: int, n: int, outroot: str) -> dict:
+def run_one(mode: str, seed: int, n: int, outroot: str, noise: float = 0.0) -> dict:
     out = Path(outroot) / f"{mode}-seed{seed}"
     t0 = time.perf_counter()
     runner.RUNS["n"] = 0
-    a = Agent(mode, out)
+    a = Agent(mode, out, noise=noise, seed=seed)
     for task in stream(seed, n):
         a.run_task(task)
     a.close()
@@ -38,7 +38,7 @@ def run_one(mode: str, seed: int, n: int, outroot: str) -> dict:
     prov = [p for p in a.prov if p["verdict"] in ("KEEP", "ROLLBACK")]
     lat = a.lat
     res = {
-        "mode": mode, "seed": seed, "n": n, "solved": solved, "solve_rate": solved / n, "window_solve_rate": win,
+        "mode": mode, "seed": seed, "n": n, "noise": noise, "solved": solved, "solve_rate": solved / n, "window_solve_rate": win,
         "task_attempts": task_att, "overhead_attempts": over,
         "attempts_per_solved": task_att / max(1, solved), "total_attempts_per_solved": (task_att + over) / max(1, solved),
         "mutations": len(prov), "keep": sum(p["verdict"] == "KEEP" for p in prov),
@@ -87,9 +87,9 @@ def table(results: list[dict]) -> str:
     return "\n".join(rows)
 
 
-def bench(modes, seeds, n, outroot="runs", jobs=1) -> list[dict]:
+def bench(modes, seeds, n, outroot="runs", jobs=1, noise=0.0) -> list[dict]:
     Path(outroot).mkdir(parents=True, exist_ok=True)
-    work = [(m, s, n, outroot) for s in seeds for m in modes]
+    work = [(m, s, n, outroot, noise) for s in seeds for m in modes]
     if jobs > 1:
         with ProcessPoolExecutor(jobs) as ex:
             results = list(ex.map(run_one, *zip(*work)))

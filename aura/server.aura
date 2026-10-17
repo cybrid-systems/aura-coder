@@ -1,0 +1,197 @@
+;; aura-coder control plane server.
+;; Protocol: one request per stdin line (tab-separated), one response per stdout line: "R " + JSON.
+;;   DECIDE  etype msg delta node                         -> {cls budget order}
+;;   REPORT  etype msg delta node solved winop             -> {propose: null | {...}}  (learner; may mutate)
+;;   VERDICT keep|drop                                     -> {version}
+;;   SOURCE                                                -> {source}     (current-source :workspace)
+;;   LEARN   0|1 ; RESET ; PING ; QUIT
+;; The repair policy itself lives in the Aura workspace (policy_seed.aura); this file is the learner + rule
+;; compiler that rewrites it with mutate:rebind, and ast:snapshot / ast:restore for rollback.
+
+(define *policy-path* (if (getenv "AURA_CODER_POLICY") (getenv "AURA_CODER_POLICY") "aura/policy_seed.aura"))
+(define *min-evidence* (if (getenv "AURA_CODER_MIN_EVIDENCE") (string->number (getenv "AURA_CODER_MIN_EVIDENCE")) 2))
+
+;; ---- rule tables (source of truth for the compiler; mirror policy_seed.aura) ----
+(define seed-classify-clauses
+  "((and (equal? etype \"AssertionError\") (or (equal? delta \"off-by-one\") (equal? delta \"len-off-by-one\"))) \"off-by-one\") ((and (equal? etype \"AssertionError\") (equal? delta \"bool-flip\")) \"wrong-compare\") ((and (equal? etype \"AssertionError\") (or (equal? delta \"numeric-other\") (equal? delta \"sign\"))) \"wrong-arith\")")
+(define seed-rank-table
+  (list (cons "off-by-one" (list "range_bound_inc" "range_bound_dec" "index_shift" "cmp_strict_toggle"))
+        (cons "wrong-compare" (list "cmp_strict_toggle" "cmp_flip"))
+        (cons "wrong-arith" (list "binop_swap" "range_bound_inc" "range_bound_dec" "cmp_flip"))))
+(define seed-budget-table (list (cons "unknown" 10)))
+(define *spec-rules* (list))          ;; newest first: (list etype msg delta node cls)
+(define *rank-table* seed-rank-table)
+(define *budget-table* seed-budget-table)
+(define *evidence* (hash))            ;; "key\top" -> count
+(define *blacklist* (hash))           ;; "kind\tkey|cls\top" -> evidence count at drop
+(define *learn* #t)
+(define *version* 0)
+(define *next-class* 0)
+(define *pending* #f)                 ;; (list snap kind old-spec old-rank old-budget bl-key)
+(define *seed-snap* -1)
+
+(define (q s) (string-append "\"" (string-replace (string-replace s "\\" "\\\\") "\"" "\\\"") "\""))
+(define (join-map f xs sep)
+  (if (null? xs) "" (if (null? (cdr xs)) (f (car xs)) (string-append (f (car xs)) sep (join-map f (cdr xs) sep)))))
+
+(define (compile-classify)
+  (string-append
+    "(lambda (etype msg delta node) (cond "
+    (join-map (lambda (r)
+                (string-append "((and (equal? etype " (q (list-ref r 0)) ") (equal? msg " (q (list-ref r 1))
+                               ") (equal? delta " (q (list-ref r 2)) ") (equal? node " (q (list-ref r 3)) ")) "
+                               (q (list-ref r 4)) ")"))
+              *spec-rules* " ")
+    " " seed-classify-clauses " (else \"unknown\")))"))
+(define (compile-rank)
+  (string-append
+    "(lambda (cls) (cond "
+    (join-map (lambda (e) (string-append "((equal? cls " (q (car e)) ") (list " (join-map q (cdr e) " ") "))"))
+              *rank-table* " ")
+    " (else (list))))"))
+(define (compile-budget)
+  (string-append
+    "(lambda (cls) (cond "
+    (join-map (lambda (e) (string-append "((equal? cls " (q (car e)) ") " (number->string (cdr e)) ")")) *budget-table* " ")
+    " (else 8)))"))
+
+(define (assoc-set tbl k v)
+  (cons (cons k v) (filter (lambda (e) (not (equal? (car e) k))) tbl)))
+(define (without x xs) (filter (lambda (y) (not (equal? y x))) xs))
+
+;; ---- protocol helpers ----
+(define (reply h) (display "R ") (display (json-encode h)) (newline))
+(define (field fs i) (if (< i (length fs)) (list-ref fs i) ""))
+(define (key-of fs) (string-append (field fs 1) "\t" (field fs 2) "\t" (field fs 3) "\t" (field fs 4)))
+
+(define (load-seed)
+  (set-code (read-file *policy-path*))
+  (eval-current)
+  (set! *seed-snap* (ast:snapshot "seed")))
+
+(define (rebind! name body why)
+  (let ((r (try (mutate:rebind name body why) (catch (e) (list "error" e)))))
+    (eq? r #t)))
+
+;; apply a proposal: snapshot, update tables, rebind, eval-current
+(define (propose! kind fs op blk n)
+  (let ((snap (ast:snapshot (string-append "v" (number->string (+ *version* 1)))))
+        (old-spec *spec-rules*) (old-rank *rank-table*) (old-budget *budget-table*)
+        (cls (classify (field fs 1) (field fs 2) (field fs 3) (field fs 4))))
+    (let ((ok
+           (if (equal? kind "specialize")
+               (let ((nc (string-append "L" (number->string *next-class*))))
+                 (set! *next-class* (+ *next-class* 1))
+                 (set! *spec-rules* (cons (list (field fs 1) (field fs 2) (field fs 3) (field fs 4) nc) *spec-rules*))
+                 (set! *rank-table* (assoc-set *rank-table* nc (list op)))
+                 (set! *budget-table* (assoc-set *budget-table* nc 6))
+                 (set! cls nc)
+                 (and (rebind! "rank" (compile-rank) (string-append "specialize rank " nc " -> " op))
+                      (rebind! "budget" (compile-budget) (string-append "specialize budget " nc))
+                      (rebind! "classify" (compile-classify) (string-append "specialize classify -> " nc))))
+               (begin
+                 (set! *rank-table* (assoc-set *rank-table* cls (evidence-rank cls)))
+                 (rebind! "rank" (compile-rank) (string-append "promote " op " in " cls))))))
+      (let ((ev (try (begin (eval-current) #t) (catch (e) #f))))
+        (set! *pending* (list snap kind old-spec old-rank old-budget blk n))
+        (hash "kind" kind "op" op "cls" cls "snap" snap "rebind_ok" ok "eval_ok" ev
+              "version" (+ *version* 1))))))
+
+;; ---- learner ----
+;; Evidence: per key (failure signature) and per class (current classification of the key at report time).
+;; specialize = add a classify clause key -> new class Lk whose rank starts with the key's winning operator
+;;              (only for "pure" keys: one operator wins >= 75% of that key's solved tasks)
+;; promote    = re-rank a class's operators by how often each one won for that class (stable sort)
+;; A dropped proposal is blacklisted until its evidence count doubles.
+(define *key-total* (hash))
+(define *class-ev* (hash))
+
+(define (top-op fs)
+  (car (order (classify (field fs 1) (field fs 2) (field fs 3) (field fs 4)))))
+
+(define (insert-desc x xs)            ;; x = (count . op); stable: equal counts keep earlier order
+  (if (null? xs) (list x)
+      (if (> (car x) (car (car xs))) (cons x xs) (cons (car xs) (insert-desc x (cdr xs))))))
+(define (sort-desc-rev xs acc) (if (null? xs) acc (sort-desc-rev (cdr xs) (insert-desc (car xs) acc))))
+(define (evidence-rank cls)
+  (let ((cur (order cls)))
+    (map cdr (filter (lambda (e) (> (car e) 0))
+                     (sort-desc-rev (map (lambda (op) (cons (hash-ref *class-ev* (string-append cls "\t" op) 0) op)) cur)
+                                    (list))))))
+
+(define (allowed? bk n)               ;; not blacklisted, or evidence doubled since the drop
+  (let ((at (hash-ref *blacklist* bk 0)))
+    (or (= at 0) (>= n (* 2 at)))))
+
+(define (maybe-propose fs op)
+  (if (or (not *learn*) *pending* (equal? op ""))
+      #f
+      (let* ((key (key-of fs))
+             (cls (classify (field fs 1) (field fs 2) (field fs 3) (field fs 4)))
+             (n (hash-ref *evidence* (string-append key "\t" op) 0))
+             (tot (hash-ref *key-total* key 0))
+             (pure (and (>= n *min-evidence*) (>= (* 4 n) (* 3 tot)) (not (equal? op (top-op fs)))))
+             (sbk (string-append "specialize\t" key "\t" op))
+             (er (evidence-rank cls))
+             (etop (if (null? er) "" (car er)))
+             (en (if (null? er) 0 (hash-ref *class-ev* (string-append cls "\t" etop) 0)))
+             (pbk (string-append "promote\t" cls "\t" etop))
+             (can-promote (and (not (equal? etop "")) (>= en *min-evidence*)
+                               (not (equal? etop (car (order cls)))) (allowed? pbk en)))
+             (can-spec (and pure (allowed? sbk n))))
+        (cond ((and (equal? cls "unknown") can-spec) (propose! "specialize" fs op sbk n))
+              (can-promote (propose! "promote" fs etop pbk en))
+              (can-spec (propose! "specialize" fs op sbk n))
+              (else #f)))))
+
+(define (handle fs)
+  (let ((cmd (field fs 0)))
+    (cond
+      ((equal? cmd "DECIDE")
+       (let ((d (decide (field fs 1) (field fs 2) (field fs 3) (field fs 4))))
+         (reply (hash "cls" (list-ref d 0) "budget" (list-ref d 1) "order" (list-ref d 2) "version" *version*))))
+      ((equal? cmd "REPORT")
+       (let ((op (field fs 6)))
+         (if (and *learn* (not (equal? op "")))
+             (let ((k (string-append (key-of fs) "\t" op))
+                   (ck (string-append (classify (field fs 1) (field fs 2) (field fs 3) (field fs 4)) "\t" op)))
+               (hash-set! *evidence* k (+ 1 (hash-ref *evidence* k 0)))
+               (hash-set! *key-total* (key-of fs) (+ 1 (hash-ref *key-total* (key-of fs) 0)))
+               (hash-set! *class-ev* ck (+ 1 (hash-ref *class-ev* ck 0))))
+             #f)
+         (let ((p (maybe-propose fs op)))
+           (reply (hash "propose" (if p p #f) "version" *version*)))))
+      ((equal? cmd "VERDICT")
+       (if *pending*
+           (let ((p *pending*))
+             (set! *pending* #f)
+             (if (equal? (field fs 1) "keep")
+                 (begin (set! *version* (+ *version* 1)) (reply (hash "version" *version* "restored" #f)))
+                 (let ((r (try (ast:restore (list-ref p 0)) (catch (e) #f))))
+                   (set! *spec-rules* (list-ref p 2))
+                   (set! *rank-table* (list-ref p 3))
+                   (set! *budget-table* (list-ref p 4))
+                   (hash-set! *blacklist* (list-ref p 5) (max 1 (list-ref p 6)))
+                   (let ((ev (try (begin (eval-current) #t) (catch (e) #f))))
+                     (reply (hash "version" *version* "restored" (eq? r #t) "eval_ok" ev))))))
+           (reply (hash "error" "no pending proposal"))))
+      ((equal? cmd "SOURCE") (reply (hash "source" (current-source :workspace) "version" *version*)))
+      ((equal? cmd "LEARN") (set! *learn* (equal? (field fs 1) "1")) (reply (hash "learn" *learn*)))
+      ((equal? cmd "RESET")
+       (let ((r (try (ast:restore *seed-snap*) (catch (e) #f))))
+         (eval-current)
+         (set! *spec-rules* (list)) (set! *rank-table* seed-rank-table) (set! *budget-table* seed-budget-table)
+         (set! *evidence* (hash)) (set! *blacklist* (hash)) (set! *key-total* (hash)) (set! *class-ev* (hash)) (set! *pending* #f) (set! *version* 0)
+         (reply (hash "restored" (eq? r #t)))))
+      ((equal? cmd "PING") (reply (hash "pong" #t "version" *version*)))
+      (else (reply (hash "error" (string-append "unknown command: " cmd)))))))
+
+(define (serve)
+  (let ((line (read-line)))
+    (if (or (eof-object? line) (equal? line "QUIT"))
+        #t
+        (begin (handle (string-split line "\t")) (serve)))))
+
+(load-seed)
+(reply (hash "ready" #t "seed_snap" *seed-snap*))
+(serve)

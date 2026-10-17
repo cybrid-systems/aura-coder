@@ -1,0 +1,7 @@
+(set-code (read-file "ws.aura"))
+(eval-current)
+(define (rb name body) (mutate:atomic-batch (list (list "mutate:rebind" name body "t"))) (eval-current))
+(rb "rk-block-get" "(lambda (a0 a1) 7)")
+(rb "rk-block-get" "(lambda (a0 a1) 8)")
+(rb "rk-dec" "(lambda (a0 a1 a2) 0)")
+(display (list "build" (try (rk-block-build "") (catch (e) "ERR")))) (newline)

@@ -1,0 +1,3 @@
+[submodule "third_party/aura-loop"]
+	path = third_party/aura-loop
+	url = https://github.com/cybrid-systems/aura-loop.git

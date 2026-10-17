@@ -1,0 +1,3 @@
+(set-code (read-file "ws.aura"))
+(eval-current)
+(display (list "seq" (try (w-seq 0) (catch (e) e)) "arg" (try (w-arg 0) (catch (e) e)))) (newline)

@@ -1,0 +1,34 @@
+;; aura-coder seed repair policy (version 0). Loaded into the Aura workspace with set-code + eval-current.
+;; The learner (server.aura) rebinds `classify`, `rank` and `budget` with mutate:rebind; everything here is
+;; the *initial* control plane. Feature fields come from the data plane (aura_coder/runner.py::features).
+(define default-order
+  (list "cmp_strict_toggle" "range_bound_inc" "range_bound_dec" "binop_swap" "index_shift" "cmp_flip"
+        "return_swap" "swap_call_args" "cast_str" "guard_empty" "guard_none" "add_import"))
+(define classify
+  (lambda (etype msg delta node)
+    (cond ((and (equal? etype "AssertionError") (or (equal? delta "off-by-one") (equal? delta "len-off-by-one"))) "off-by-one")
+          ((and (equal? etype "AssertionError") (equal? delta "bool-flip")) "wrong-compare")
+          ((and (equal? etype "AssertionError") (or (equal? delta "numeric-other") (equal? delta "sign"))) "wrong-arith")
+          (else "unknown"))))
+(define rank
+  (lambda (cls)
+    (cond ((equal? cls "off-by-one") (list "range_bound_inc" "range_bound_dec" "index_shift" "cmp_strict_toggle"))
+          ((equal? cls "wrong-compare") (list "cmp_strict_toggle" "cmp_flip"))
+          ((equal? cls "wrong-arith") (list "binop_swap" "range_bound_inc" "range_bound_dec" "cmp_flip"))
+          (else (list)))))
+(define budget
+  (lambda (cls)
+    (cond ((equal? cls "unknown") 10)
+          (else 8))))
+(define drop-all
+  (lambda (xs ys)
+    (if (null? ys) (list)
+        (if (member (car ys) xs) (drop-all xs (cdr ys)) (cons (car ys) (drop-all xs (cdr ys)))))))
+(define order
+  (lambda (cls)
+    (let ((pref (rank cls)))
+      (append pref (drop-all pref default-order)))))
+(define decide
+  (lambda (etype msg delta node)
+    (let ((c (classify etype msg delta node)))
+      (list c (budget c) (order c)))))

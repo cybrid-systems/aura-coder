@@ -1,0 +1,39 @@
+;; Closed-loop latency micro-benchmark, all inside one Aura process:
+;;   set-code -> query -> mutate:rebind -> eval-current -> decide
+;; Aura only has a millisecond clock (current-time-ms), so each step is looped N times and averaged.
+(define N (if (getenv "N") (string->number (getenv "N")) 200))
+(define policy (read-file (if (getenv "AURA_CODER_POLICY") (getenv "AURA_CODER_POLICY") "aura/policy_seed.aura")))
+(define rank-a "(lambda (cls) (cond ((equal? cls \"off-by-one\") (list \"range_bound_inc\" \"index_shift\")) (else (list))))")
+(define rank-b "(lambda (cls) (cond ((equal? cls \"off-by-one\") (list \"index_shift\" \"range_bound_inc\")) (else (list))))")
+
+(define (times n thunk) (if (<= n 0) #t (begin (thunk n) (times (- n 1) thunk))))
+(define (us-per n thunk)
+  (let ((t0 (current-time-ms)))
+    (times n thunk)
+    (/ (* 1000.0 (- (current-time-ms) t0)) n)))
+
+(set-code policy) (eval-current)
+
+(define r-cycle
+  (us-per N (lambda (i)
+    (set-code policy)
+    (eval-current)
+    (query :find "rank")
+    (mutate:rebind "rank" (if (even? i) rank-a rank-b) "bench")
+    (eval-current)
+    (decide "AssertionError" "-" "off-by-one" "-"))))
+(set-code policy) (eval-current)
+(define r-setcode (us-per N (lambda (i) (set-code policy) (eval-current))))
+(define r-query (us-per N (lambda (i) (query :find "rank"))))
+(define r-rebind (us-per N (lambda (i) (mutate:rebind "rank" (if (even? i) rank-a rank-b) "bench"))))
+(define r-eval (us-per N (lambda (i) (eval-current))))
+(define r-rebind-eval (us-per N (lambda (i) (mutate:rebind "rank" (if (even? i) rank-a rank-b) "bench") (eval-current))))
+(define r-decide (us-per (* 20 N) (lambda (i) (decide "AssertionError" "-" "off-by-one" "-"))))
+(define r-snapshot (us-per N (lambda (i) (ast:snapshot "bench"))))
+(define s0 (ast:snapshot "base"))
+(define r-restore (us-per N (lambda (i) (ast:restore s0) (eval-current))))
+(display "BENCH ")
+(display (json-encode (hash "n" N "cycle_us" r-cycle "set_code_eval_us" r-setcode "query_us" r-query
+                            "rebind_us" r-rebind "eval_current_us" r-eval "rebind_eval_us" r-rebind-eval
+                            "decide_us" r-decide "snapshot_us" r-snapshot "restore_eval_us" r-restore)))
+(newline)

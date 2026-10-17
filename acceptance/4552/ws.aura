@@ -1,0 +1,3 @@
+(define w-seq (lambda (x) (if (> x 0) #t (error "boom-seq")) 5))
+(define w-tail (lambda (x) (if (> x 0) 1 (error "boom-tail"))))
+(define w-arg (lambda (x) (+ 1 (w-tail x))))

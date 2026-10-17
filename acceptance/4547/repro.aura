@@ -1,0 +1,5 @@
+(require "wsload" all:)
+(require "caller6" all:)
+(mutate:rebind "wb" "(lambda (x) (+ x 3000))" "repro")
+(eval-current)
+(display (list "caller6:b" (try (caller6:b) (catch (e) "ERR")) "caller6:a" (try (caller6:a) (catch (e) "ERR")))) (newline)

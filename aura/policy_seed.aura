@@ -20,12 +20,15 @@
   (lambda (cls)
     (cond ((equal? cls "unknown") 10)
           (else 8))))
-;; The full operator order is `rank` followed by the rest of `default-order`; server.aura's `order-of` completes
-;; it on the host side.
-;; WORKAROUND cybrid-systems/aura#4584: a workspace define that passes a procedure to filter/map makes later calls
-;;   from `decide` dispatch to the wrong define, and a self-recursive helper instead trips aura#4583 (each rebind
-;;   ~4x slower than the last). So the workspace returns the preference list and the host appends the remainder.
+;; The full operator order is `rank` followed by the rest of `default-order`. It is computed in the workspace
+;; (filter over a sibling define), which aura#4584 / aura#4583 used to break; both are fixed upstream.
+(define order-of
+  (lambda (pref dflt)
+    (append pref (filter (lambda (o) (not (member o pref))) dflt))))
+(define full-order
+  (lambda (cls)
+    (order-of (rank cls) default-order)))
 (define decide
   (lambda (etype msg delta node)
     (let ((c (classify etype msg delta node)))
-      (list c (budget c) (rank c) default-order))))
+      (list c (budget c) (full-order c)))))

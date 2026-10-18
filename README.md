@@ -81,7 +81,7 @@ Setup:
 - Stream: 60 tasks with distribution shift. Window 1 (tasks 1–20) has only the classes the seed policy knows (off-by-one, compare, arith). Window 2 (tasks 21–40) is 40% known and 60% new (None guard, empty guard, missing import). Window 3 (tasks 41–60) is 30% / 30% / 40%, where the last 40% are three more new classes (type cast, wrong return, swapped args).
 - Seeds 0–4. Each seed renames identifiers so the stream is not a literal replay.
 
-Command: `python3 -m aura_coder bench --seeds 0 1 2 3 4 --n 60`. Binary: Aura main `c8ad457c9` build-rel,
+Command: `python3 -m aura_coder bench --seeds 0 1 2 3 4 --n 60`. Binary: Aura main `e50951bff` build-rel (re-pinned 2026-10-18; first published on `c8ad457c9`),
 run in `ghcr.io/cybrid-systems/dev:v1.0.9` with `--memory=4g`.
 
 Modes:
@@ -91,17 +91,21 @@ Modes:
 - **adaptive:** learner plus replay gate plus rollback.
 - **adaptive-nogate:** learner, every proposal kept.
 
-### Clean tests (noise = 0), `results/bench-v3.*`
+### Clean tests (noise = 0), `results/bench-v4.*`
 
 | mode | solve rate mean (min–max) | window 1 / 2 / 3 | attempts / solved (task) | attempts / solved (incl. post-mortem + gate) | mutations / seed | KEEP / ROLLBACK per seed | restart ms / task | wall s |
 |---|---|---|---|---|---|---|---|---|
 | static | 94.0% (90–97) | 100 / 86 / 96 | 3.35 | 3.35 | 0 | 0 / 0 | – | 8 |
-| restart | 94.0% (90–97) | 100 / 86 / 96 | 3.35 | 3.35 | 0 | 0 / 0 | 86 | 13 |
-| adaptive | **98.0%** (97–98) | 100 / 94 / 100 | **2.45** | 5.23 | 10.4 | 6.2 / 4.2 | – | 14 |
-| adaptive-nogate | **98.0%** (97–98) | 100 / 94 / 100 | **2.45** | 2.90 | 9.4 | 9.4 / 0 | – | 9 |
+| restart | 94.0% (90–97) | 100 / 86 / 96 | 3.35 | 3.35 | 0 | 0 / 0 | 51 | 12 |
+| adaptive | **98.0%** (97–98) | 100 / 94 / 100 | **2.45** | 5.23 | 10.4 | 6.2 / 4.2 | – | 13 |
+| adaptive-nogate | **98.0%** (97–98) | 100 / 94 / 100 | **2.45** | 2.90 | 9.4 | 9.4 / 0 | – | 8 |
 
 Totals over 5 seeds: adaptive had 31 KEEP and 21 ROLLBACK; nogate had 47 KEEP. Every rollback restored the
 source exactly, which the host asserts on each drop.
+
+The solve numbers are identical to the `c8ad457c9` run (`results/bench-v3.*`): the stream and operators are
+deterministic, and removing the #4584 workaround (the full operator order is now computed in the workspace) does
+not change any decision. Only timing changed; see latency below.
 
 ### Mis-attributed fixes (noise = 0.3), `results/noise30.*`
 
@@ -122,34 +126,34 @@ does better in window 3 there (100% vs 80%).
 All steps were measured inside one Aura process. Aura only exposes `current-time-ms`, so each step was
 looped N=200 times and the mean taken.
 
-| step | µs / op |
-|---|---|
-| `set-code` (seed policy) + `eval-current` | 5755 |
-| `query :find "rank"` | 95 |
-| `mutate:rebind "rank"` | 2545 |
-| `eval-current` | 745 |
-| `mutate:rebind` + `eval-current` | 9990 |
-| `decide` (workspace call) | 94 |
-| `ast:snapshot` | 9085 |
-| `ast:restore` + `eval-current` | 22090 |
-| **full cycle** set-code → query → rebind → eval-current → decide | **9105** |
+| step | µs / op (`e50951bff`) | was on `c8ad457c9` |
+|---|---|---|
+| `set-code` (seed policy) + `eval-current` | 1960 | 5755 |
+| `query :find "rank"` | 10 | 95 |
+| `mutate:rebind "rank"` | 510 | 2545 |
+| `eval-current` | 65 | 745 |
+| `mutate:rebind` + `eval-current` | 2065 | 9990 |
+| `decide` (workspace call) | 27 | 94 |
+| `ast:snapshot` | 945 | 9085 |
+| `ast:restore` + `eval-current` | 1900 | 22090 |
+| **full cycle** set-code → query → rebind → eval-current → decide | **3100** | 9105 |
 
 Host round trip (Python ↔ Aura over pipes, `perf_counter`):
 
-| request | n | p50 | p99 | first → last |
-|---|---|---|---|---|
-| DECIDE | 1000 | 1.81 ms | 2.55 ms | 2.04 → 1.67 ms |
-| MUTATE (REPORT that proposes: snapshot + 1–3 rebinds + eval-current) | 40 | 223 ms | 464 ms | 58 → 464 ms |
-| KEEP | 20 | 0.5 ms | 1.2 ms | |
-| ROLLBACK (restore + eval-current) | 20 | 23.5 ms | 51.9 ms | 6.1 → 51.9 ms |
-| restart-each-task (spawn + set-code seed + eval-current + snapshot) | | 90 ms | | |
+| request | n | p50 | p99 | first → last | p50 on `c8ad457c9` |
+|---|---|---|---|---|---|
+| DECIDE | 1000 | 0.28 ms | 0.56 ms | 0.59 → 0.51 ms | 1.81 ms |
+| MUTATE (REPORT that proposes: snapshot + 1–3 rebinds + eval-current) | 40 | 61 ms | 138 ms | 17 → 138 ms | 223 ms |
+| KEEP | 20 | 0.3 ms | 0.5 ms | | 0.5 ms |
+| ROLLBACK (restore + eval-current) | 20 | 5.4 ms | 10.5 ms | 2.3 → 8.6 ms | 23.5 ms |
+| restart-each-task (spawn + set-code seed + eval-current + snapshot) | | 57 ms | | | 90 ms |
 
 ### What this shows, and what it doesn't
 
 - **Self-edited policy helps under distribution shift.**
   - Solve rate goes from 94.0% to 98.0%, and task attempts per solve from 3.35 to 2.45.
   - All of the gain is in windows 2 and 3, where new bug classes appear. Window 1 is 100% in every mode.
-  - Restarting each task gives exactly the static result plus about 86–90 ms per task. Keeping one process (and its learned rules) is what makes the improvement possible.
+  - Restarting each task gives exactly the static result plus about 51–57 ms per task. Keeping one process (and its learned rules) is what makes the improvement possible.
 - **The gate does not earn its cost on clean tests.**
   - It never blocks a useful change, so nogate solves the same tasks.
   - It costs about 2.3 extra test runs per solved task (5.23 vs 2.90).
@@ -158,10 +162,10 @@ Host round trip (Python ↔ Aura over pipes, `perf_counter`):
   - The whole difference comes from one seed out of five, so this is a **hint, not a significant result**.
   - Next step: more seeds, a noise sweep from 0.1 to 0.5, and a cheaper gate (sample the window, or only replay tasks whose decision changed, which is already done).
 - **Latency.**
-  - Deciding is cheap, about 94 µs inside Aura.
-  - A host DECIDE costs about 1.8 ms, roughly 19x the in-process cost. This is aura#4585: every host-program call gets slower after one `set-code`.
-  - A full rebind + eval cycle costs about 10 ms in process.
-  - The host-side MUTATE grows from 58 ms to 464 ms over 40 proposals. The generated rule tables grow, and aura#4585 also adds cost. The cause has not been isolated, so long runs need watching.
+  - Deciding is cheap, about 27 µs inside Aura.
+  - A host DECIDE costs about 0.28 ms p50 (pipes + JSON), about 10x the in-process cost. On `c8ad457c9` it was 1.8 ms because of aura#4585 (host-program calls slowed down after one `set-code`), now fixed.
+  - A full rebind + eval cycle costs about 2 ms in process (was 10 ms).
+  - The host-side MUTATE still grows over a run, from 17 ms to 138 ms over 40 proposals (was 58 → 464 ms). The generated rule tables grow; the remaining growth has not been isolated, so long runs need watching.
   - Even so, MUTATE stays far below the cost of one LLM call, which is the cost a real agent pays per attempt.
 
 ### Honest caveats
@@ -170,18 +174,18 @@ Host round trip (Python ↔ Aura over pipes, `perf_counter`):
 - There are 5 seeds of 60 tasks each, with no confidence intervals. The 98.0% vs 94.0% gap is consistent across seeds: adaptive scores ≥ 96.7% on every seed, and static scores 90–96.7%.
 - The learner only edits rule *tables* (`classify` clauses, `rank` order, `budget`). It does not write new operators.
 - "Noise" means mis-attributed winning operators. It does not model flaky tests that fail a correct patch.
-- Two Aura workarounds shape the policy code (see below). The workspace `decide` returns a preference list, and the host completes the order.
-- **`AURA_SANDBOX=off`** is set everywhere (`scripts/*.sh`, `run.sh`). With the sandbox on, the Soft level still blocks the workspace mutation and source primitives this agent needs (cybrid-systems/aura#4575). This means the policy process runs **without Aura's capability sandbox**. Run it only on trusted input, in a container with a memory cap. The scripts use `--memory=4g` because a runaway rebind (#4583) otherwise eats the host.
+- **`AURA_SANDBOX=off`** is set everywhere (`scripts/*.sh`, `run.sh`). #4575 added a scoped Soft auto-grant (`aura soft`), but under it the `mutate:rebind` calls this agent needs are still refused with `commit-not-ready` (cybrid-systems/aura#4609). This means the policy process runs **without Aura's capability sandbox**. Run it only on trusted input, in a container with a memory cap. The scripts keep `--memory=4g` as a guard (a runaway rebind, #4583, used to eat the host).
 
 ## Known Aura issues (found by this repo)
 
-| issue | symptom | workaround here | acceptance |
+| issue | symptom | status on `e50951bff` | acceptance |
 |---|---|---|---|
-| cybrid-systems/aura#4583 | repeated `mutate:rebind` gets ~4x slower each time and OOMs (13 GB RSS) when the workspace also holds a self-recursive define | no self-recursive defines in the workspace policy | `acceptance/4583` (FAIL on c8ad457c9) |
-| cybrid-systems/aura#4584 | a second call to a workspace define runs a *different* define when a sibling passes a procedure to `filter`/`map` | no `filter`/`map` in the workspace; host completes the order | `acceptance/4584` (FAIL) |
-| cybrid-systems/aura#4585 | after one `set-code`, every host-program call is ~25–38x slower | none (shows up as host DECIDE ≈ 1.8 ms) | latency table |
-| #4546 / #4552 (open upstream) | define dropped / non-tail `error` dropped | not on the policy's path | `acceptance/4546`, `4552` (FAIL) |
-| #4547 / #4550 (fixed in c8ad457c9) | wrong dispatch / invalid closure after rebind | none needed now | `acceptance/4547`, `4550` (PASS) |
+| cybrid-systems/aura#4583 | repeated `mutate:rebind` gets ~4x slower each time and OOMs (13 GB RSS) when the workspace also holds a self-recursive define | fixed upstream; workaround removed | `acceptance/4583` (PASS) |
+| cybrid-systems/aura#4584 | a second call to a workspace define runs a *different* define when a sibling passes a procedure to `filter`/`map` | fixed upstream; workaround removed (`full-order` uses `filter` in the workspace, the host no longer completes the order) | `acceptance/4584` (PASS) |
+| cybrid-systems/aura#4585 | after one `set-code`, every host-program call is ~25–38x slower | fixed upstream (host DECIDE 1.8 → 0.28 ms) | latency table |
+| #4546 / #4552 | define dropped / non-tail `error` dropped | fixed upstream | `acceptance/4546`, `4552` (PASS) |
+| #4547 / #4550 | wrong dispatch / invalid closure after rebind | fixed upstream | `acceptance/4547`, `4550` (PASS) |
+| cybrid-systems/aura#4609 (open) | under `aura soft`, `mutate:rebind` is guard-rejected (`commit-not-ready`) | `AURA_SANDBOX=off` + container memory cap | – |
 
 `python3 -m aura_coder acceptance` prints PASS/FAIL for each item against `$AURA_BIN`
 (latest output: `results/acceptance.txt`). Once an issue is fixed upstream, its workaround should be removed.
@@ -190,7 +194,7 @@ Host round trip (Python ↔ Aura over pipes, `perf_counter`):
 
 ```bash
 git clone --recursive https://github.com/cybrid-systems/aura-coder && cd aura-coder
-export AURA_BIN=~/aura/build-rel/aura          # Aura build-rel binary (main >= c8ad457c9)
+export AURA_BIN=~/aura/build-rel/aura          # Aura build-rel binary (main >= e50951bff)
 scripts/test.sh --docker                        # unit tests (control-plane tests need AURA_BIN)
 scripts/bench.sh --docker --seeds 0 1 2 3 4 --n 60 --modes static restart adaptive adaptive-nogate
 scripts/in-docker.sh 'python3 -m aura_coder bench --modes adaptive adaptive-nogate --noise 0.3 --out runs-noise30'

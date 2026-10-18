@@ -6,7 +6,11 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${AURA_IMAGE:-ghcr.io/cybrid-systems/dev:v1.0.9}"
 : "${AURA_BIN:?set AURA_BIN to an Aura build-rel/aura}"
-AURA_LIB="${AURA_LIB:-$(cd "$(dirname "$AURA_BIN")/../lib" && pwd)}"
+# lib/ next to the binary (a self-contained pin dir) or ../lib (a build-rel inside a checkout)
+if [ -z "${AURA_LIB:-}" ]; then
+  if [ -d "$(dirname "$AURA_BIN")/lib" ]; then AURA_LIB="$(cd "$(dirname "$AURA_BIN")/lib" && pwd)"
+  else AURA_LIB="$(cd "$(dirname "$AURA_BIN")/../lib" && pwd)"; fi
+fi
 DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo docker"
 mounts=(-v "$REPO:$REPO")
 for p in "$(dirname "$AURA_BIN")" "$AURA_LIB"; do mounts+=(-v "$p:$p"); done

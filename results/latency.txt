@@ -1,16 +1,16 @@
 inside Aura (µs per op, current-time-ms clock, N=200)
-  cycle_us               9105.0
-  set_code_eval_us       5755.0
-  query_us                 95.0
-  rebind_us              2545.0
-  eval_current_us         745.0
-  rebind_eval_us         9990.0
-  decide_us                94.2
-  snapshot_us            9085.0
-  restore_eval_us       22090.0
+  cycle_us               3100.0
+  set_code_eval_us       1960.0
+  query_us                 10.0
+  rebind_us               510.0
+  eval_current_us          65.0
+  rebind_eval_us         2065.0
+  decide_us                27.2
+  snapshot_us             945.0
+  restore_eval_us        1900.0
 host round trip over pipes (perf_counter)
-  DECIDE    n= 1000  p50    1809.6 µs  p99    2551.9 µs  first   2043.9  last   1666.2
-  MUTATE    n=   40  p50     222.7 ms  p99     464.1 ms  first     58.4  last    464.1
-  KEEP      n=   20  p50       0.5 ms  p99       1.2 ms  first      0.3  last      0.7
-  ROLLBACK  n=   20  p50      23.5 ms  p99      51.9 ms  first      6.1  last     51.9
-  startup (spawn + set-code seed + eval-current + snapshot): 90 ms
+  DECIDE    n= 1000  p50     278.9 µs  p99     556.8 µs  first    591.1  last    507.6
+  MUTATE    n=   40  p50      60.9 ms  p99     138.0 ms  first     16.7  last    138.0
+  KEEP      n=   20  p50       0.3 ms  p99       0.5 ms  first      0.4  last      0.5
+  ROLLBACK  n=   20  p50       5.4 ms  p99      10.5 ms  first      2.3  last      8.6
+  startup (spawn + set-code seed + eval-current + snapshot): 57 ms
